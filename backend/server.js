@@ -2,190 +2,274 @@ const express = require("express");
 const cors = require("cors");
 const fs = require("fs");
 const csv = require("csv-parser");
-const { Ollama } = require("ollama");
+const connectDB = require("./db");
+const Chat = require("./models/Chat");
+const axios = require("axios");
+const multer = require("multer");
+const path = require("path");
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 
-const ollama = new Ollama();
-
-let diseases = [];
+connectDB();
 
 /* -----------------------------
-   Load Dataset
+   HEART RULE ENGINE
 ------------------------------*/
-fs.createReadStream("../dataset/dataset.csv")
+function heartRuleScore(symptomsText) {
+  const symptoms = (symptomsText || "").toLowerCase();
+  let score = 0;
+
+  if (symptoms.includes("chest pain")) score += 0.3;
+  if (symptoms.includes("shortness of breath")) score += 0.25;
+  if (symptoms.includes("fatigue")) score += 0.2;
+  if (symptoms.includes("dizziness")) score += 0.15;
+  if (symptoms.includes("sweating")) score += 0.1;
+
+  return Math.min(score, 1);
+}
+
+/* -----------------------------
+   LOAD DATASET
+------------------------------*/
+let diseases = [];
+
+fs.createReadStream("./dataset/dataset.csv")
   .pipe(csv())
   .on("data", (row) => diseases.push(row))
   .on("end", () => {
-    console.log("Dataset loaded:", diseases.length);
+    console.log("✅ Dataset loaded:", diseases.length);
   });
 
 /* -----------------------------
-   Common diseases priority
+   COMMON DISEASES
 ------------------------------*/
 const commonDiseases = [
   "Common Cold",
   "Flu",
   "Viral Fever",
   "Allergy",
-  "Sinusitis"
+  "Sinusitis",
 ];
 
 /* -----------------------------
-   Extract symptoms
+   SYNONYMS
+------------------------------*/
+const synonymMap = {
+  "heart pain": "chest pain",
+  cold: "common cold",
+  fever: "high fever",
+  tired: "fatigue",
+  "head pain": "headache",
+};
+
+/* -----------------------------
+   EXTRACT SYMPTOMS
 ------------------------------*/
 function extractSymptoms(text) {
-
   return text
     .toLowerCase()
-    .replace(/_/g, " ")
-    .replace(/[^a-z ,]/g, "")
-    .split(/[ ,]+/)
-    .filter(word => word.length > 2);
-
+    .split(",")
+    .map((s) => s.trim())
+    .filter((s) => s.length > 2);
 }
 
 /* -----------------------------
-   AI Chat Assistant
+   ✅ FIXED PREDICT (MAIN ML ROUTE)
 ------------------------------*/
-app.post("/chat", async (req, res) => {
-
+app.post("/predict", async (req, res) => {
   try {
+    console.log("REQ BODY:", req.body);
 
-    const userMessage = req.body.message;
+    const mappedData = {
+      age: Number(req.body.age),
+      trestbps: Number(req.body.trestbps),
+      chol: Number(req.body.chol),
+      thalach: Number(req.body.thalach),
+      oldpeak: Number(req.body.oldpeak),
+    };
 
-    const response = await ollama.chat({
-      model: "phi3",
-      messages: [{ role: "user", content: userMessage }]
-    });
+    console.log("MAPPED DATA:", mappedData);
+
+    const response = await axios.post(
+      "http://ai-service:5000/predict",
+      mappedData
+    );
+
+    console.log("FLASK RESPONSE:", response.data);
+
+    res.json(response.data);
+
+  } catch (error) {
+    console.error("Predict Error:", error.message);
 
     res.json({
-      reply: response.message.content
+      ml_probability: 0,
+      rule_score: 0,
+      combined_score: 0,
+      final_risk: "ERROR",
+    });
+  }
+});
+
+/* -----------------------------
+   HYBRID PREDICTION (OPTIONAL)
+------------------------------*/
+app.post("/hybrid-predict", async (req, res) => {
+  try {
+    const { data, symptoms } = req.body;
+
+    const mappedData = {
+      age: data?.[0],
+      sex: data?.[1],
+      cp: data?.[2],
+      trestbps: data?.[3],
+      chol: data?.[4],
+      fbs: data?.[5],
+      restecg: data?.[6],
+      thalach: data?.[7],
+      exang: data?.[8],
+      oldpeak: data?.[9],
+      slope: data?.[10],
+      ca: data?.[11],
+      thal: data?.[12],
+    };
+
+    const response = await axios.post(
+      "http://ai-service:5000/predict",
+      mappedData
+    );
+
+    const mlProb = response.data.ml_probability;
+    const ruleScore = heartRuleScore(symptoms || "");
+    const combinedScore = 0.7 * mlProb + 0.3 * ruleScore;
+
+    let finalRisk = "LOW";
+
+    if (combinedScore > 0.7) finalRisk = "HIGH";
+    else if (combinedScore > 0.4) finalRisk = "MEDIUM";
+
+    res.json({
+      ml_probability: mlProb,
+      rule_score: ruleScore,
+      combined_score: combinedScore,
+      final_risk: finalRisk,
     });
 
   } catch (error) {
-
-    console.error(error);
-
-    res.status(500).json({
-      error: "AI assistant failed"
-    });
-
+    console.error("Hybrid Error:", error.message);
+    res.status(500).json({ error: "Hybrid model failed" });
   }
-
 });
 
 /* -----------------------------
-   Disease Diagnosis
+   AI CHAT
 ------------------------------*/
-app.post("/diagnose", (req, res) => {
+app.post("/chat", async (req, res) => {
+  try {
+    const userMessage = req.body.message;
 
-  const userSymptoms = extractSymptoms(req.body.symptoms);
+    await Chat.create({ role: "user", content: userMessage });
 
-  if (userSymptoms.length < 2) {
-    return res.json({
-      diagnosis: {
-        message: "Please enter at least 2 symptoms.",
-        results: [],
-        warning: ""
+    const ollamaRes = await axios.post(
+      "http://host.docker.internal:11434/api/generate",
+      {
+        model: "tinyllama",
+        prompt: userMessage,
+        stream: false,
       }
-    });
+    );
+
+    const aiReply = ollamaRes.data.response;
+
+    await Chat.create({ role: "assistant", content: aiReply });
+
+    res.json({ response: aiReply });
+
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ response: "Error saving chat" });
   }
+});
 
-  let results = [];
+app.post("/diagnose", async (req, res) => {
+  try {
+    const { symptoms } = req.body;
 
-  diseases.forEach(disease => {
+    console.log("SYMPTOMS:", symptoms);
 
-    const diseaseSymptoms = Object.values(disease)
-      .slice(1)
-      .map(s => s.toLowerCase().replace(/_/g, " ").trim())
-      .filter(Boolean);
-
-    let matchCount = 0;
-
-    userSymptoms.forEach(symptom => {
-
-      diseaseSymptoms.forEach(ds => {
-
-        if (ds.includes(symptom) || symptom.includes(ds)) {
-          matchCount++;
-        }
-
-      });
-
+    const response = await fetch("http://host.docker.internal:11434/api/generate", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "phi3",
+        prompt: `You are a medical assistant. Symptoms: ${symptoms}. Give disease and advice.`,
+        stream: false,
+      }),
     });
 
-    const ratio = matchCount / diseaseSymptoms.length;
+    const data = await response.json();
 
-    if (ratio > 0) {
-      results.push({
-        disease: disease.Disease,
-        score: ratio
-      });
-    }
+    console.log("OLLAMA RESPONSE:", data);
 
-  });
+    res.json({
+      response: data.response || "No response",
+    });
 
-  /* -----------------------------
-     Remove Duplicate Diseases
-  ------------------------------*/
-  let uniqueDiseases = {};
-
-  results.forEach(item => {
-
-    if (!uniqueDiseases[item.disease] || uniqueDiseases[item.disease] < item.score) {
-      uniqueDiseases[item.disease] = item.score;
-    }
-
-  });
-
-  results = Object.keys(uniqueDiseases).map(d => ({
-    disease: d,
-    score: uniqueDiseases[d]
-  }));
-
-  /* -----------------------------
-     Sort by score
-  ------------------------------*/
-  results.sort((a, b) => b.score - a.score);
-
-  /* -----------------------------
-     Prefer common diseases
-  ------------------------------*/
-  results = results.sort((a, b) => {
-
-    if (commonDiseases.includes(a.disease)) return -1;
-    if (commonDiseases.includes(b.disease)) return 1;
-
-    return b.score - a.score;
-
-  });
-
-  const topResults = results.slice(0, 3);
-
-  res.json({
-    diagnosis: {
-      message: "Possible conditions (AI estimation only)",
-      results: topResults,
-      warning:
-        "⚠ This is an AI-assisted symptom checker, not a medical diagnosis. Please consult a doctor."
-    }
-  });
-
+  } catch (err) {
+    console.error("Diagnose error:", err);
+    res.status(500).json({ error: "Diagnosis failed" });
+  }
 });
 
 /* -----------------------------
-   Test route
+   CHAT HISTORY
+------------------------------*/
+app.get("/chat-history", async (req, res) => {
+  const chats = await Chat.find().sort({ timestamp: 1 });
+  res.json(chats);
+});
+
+app.delete("/chat-history", async (req, res) => {
+  await Chat.deleteMany({});
+  res.json({ message: "Chat cleared" });
+});
+
+/* -----------------------------
+   FILE UPLOAD
+------------------------------*/
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => cb(null, "uploads/"),
+  filename: (req, file, cb) =>
+    cb(null, Date.now() + "-" + file.originalname),
+});
+
+const upload = multer({ storage });
+
+app.use("/uploads", express.static("uploads"));
+
+app.post("/upload", upload.single("file"), (req, res) => {
+  res.json({
+    message: "File uploaded",
+    file: req.file.filename,
+  });
+});
+
+/* -----------------------------
+   HEALTH CHECK
 ------------------------------*/
 app.get("/", (req, res) => {
-  res.send("Healthcare AI Backend Running");
+  res.send("🚀 Healthcare AI Backend Running");
 });
 
 /* -----------------------------
-   Start server
+   START SERVER
 ------------------------------*/
-app.listen(5000, () => {
-  console.log("Server running on port 5000");
+const PORT = 5001;
+
+app.listen(PORT, () => {
+  console.log(`🚀 Server running on port ${PORT}`);
 });

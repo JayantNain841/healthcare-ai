@@ -1,13 +1,4 @@
-version: "3.9"
-
 services:
-
-  backend:
-    build: ./backend
-    ports:
-      - "5000:5000"
-    volumes:
-      - ./dataset:/dataset
 
   frontend:
     build: ./frontend
@@ -15,3 +6,39 @@ services:
       - "3000:3000"
     depends_on:
       - backend
+    networks:
+      - app-network
+
+  backend:
+    build: ./backend
+    ports:
+      - "5001:5001"
+    depends_on:
+      - ai-service
+      - mongodb   # ✅ IMPORTANT
+    networks:
+      - app-network
+
+  ai-service:
+    build: ./ai-service
+    ports:
+      - "5000:5000"
+    networks:
+      - app-network
+
+  mongodb:
+    image: mongo:6
+    container_name: mongodb
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+    networks:
+      - app-network
+
+# ✅ volumes must be OUTSIDE services
+volumes:
+  mongo_data:
+
+networks:
+  app-network:
