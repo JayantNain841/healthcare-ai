@@ -2,10 +2,11 @@ const mongoose = require("mongoose");
 
 const connectDB = async () => {
   try {
-    await mongoose.connect("mongodb://mongodb:27017/healthcareAI");
-    console.log("✅ MongoDB Connected");
-  } catch (err) {
-    console.error("❌ MongoDB Error:", err.message);
+    await mongoose.connect(process.env.MONGO_URI);
+
+    console.log("✅ MongoDB Connected (Atlas)");
+  } catch (error) {
+    console.error("❌ MongoDB Error:", error.message);
     process.exit(1);
   }
 };
