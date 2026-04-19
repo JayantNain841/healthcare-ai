@@ -106,5 +106,7 @@ Ollama (LLM via ngrok)
 ```bash
 docker-compose up --build
 
-👨‍💻 Author
+---
+
+## 👨‍💻 Author
 Jayant
