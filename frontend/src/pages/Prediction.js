@@ -18,7 +18,7 @@ export default function Prediction() {
   // ✅ NEW FUNCTION (REPLACES analyze)
   const sendHealthData = async (formData) => {
     try {
-      const res = await axios.post("http://localhost:5001/predict", formData);
+      const res = await axios.post(`${process.env.REACT_APP_API_URL}/predict`, formData);
 
       console.log("ML RESULT:", res.data); // 🔥 debug
 

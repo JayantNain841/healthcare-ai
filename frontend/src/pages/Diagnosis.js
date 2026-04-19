@@ -12,8 +12,8 @@ export default function Diagnosis() {
     }
 
     try {
-      const res = await axios.post("http://localhost:5001/diagnose", {
-        symptoms: input,
+      const res = await axios.post(`${process.env.REACT_APP_API_URL}/diagnose`, {
+        symptoms: input
       });
 
       setResult(res.data.response);

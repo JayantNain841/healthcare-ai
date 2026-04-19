@@ -2,6 +2,8 @@ import React, { useEffect, useRef, useState } from "react";
 import ChatMessage from "./ChatMessage";
 import ChatInput from "./ChatInput";
 
+const API_URL = process.env.REACT_APP_API_URL;
+
 const ChatContainer = () => {
   const [messages, setMessages] = useState([
     { role: "assistant", content: "Hello! I'm your Healthcare AI assistant." },
@@ -14,7 +16,7 @@ const ChatContainer = () => {
   useEffect(() => {
     const loadHistory = async () => {
       try {
-        const res = await fetch("http://localhost:5001/chat-history");
+        const res = await fetch(`${API_URL}/chat-history`);
         const data = await res.json();
 
         if (data.length > 0) {
@@ -43,7 +45,7 @@ const ChatContainer = () => {
     setLoading(true);
 
     try {
-      const res = await fetch("http://localhost:5001/chat", {
+      const res = await fetch(`${API_URL}/chat`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -76,7 +78,7 @@ const ChatContainer = () => {
     if (!confirmClear) return;
 
     try {
-      await fetch("http://localhost:5001/chat-history", {
+      await fetch(`${API_URL}/chat-history`, {
         method: "DELETE",
       });
 
