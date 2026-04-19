@@ -110,3 +110,5 @@ docker-compose up --build
 
 Jayant
 
+⚠️ Note: Chat functionality depends on local LLM server (Ollama) and may require active backend connectivity.
+
