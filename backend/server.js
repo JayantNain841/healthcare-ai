@@ -1,4 +1,4 @@
-require('dotenv').config();
+require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
 const fs = require("fs");
@@ -7,13 +7,18 @@ const connectDB = require("./db");
 const Chat = require("./models/Chat");
 const axios = require("axios");
 const multer = require("multer");
-const path = require("path");
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 
 connectDB();
+
+/* -----------------------------
+   ENV VARIABLES
+------------------------------*/
+const ML_URL = process.env.ML_SERVICE_URL;
+const OLLAMA_URL = process.env.OLLAMA_URL;
 
 /* -----------------------------
    HEART RULE ENGINE
@@ -44,45 +49,10 @@ fs.createReadStream("./dataset/dataset.csv")
   });
 
 /* -----------------------------
-   COMMON DISEASES
-------------------------------*/
-const commonDiseases = [
-  "Common Cold",
-  "Flu",
-  "Viral Fever",
-  "Allergy",
-  "Sinusitis",
-];
-
-/* -----------------------------
-   SYNONYMS
-------------------------------*/
-const synonymMap = {
-  "heart pain": "chest pain",
-  cold: "common cold",
-  fever: "high fever",
-  tired: "fatigue",
-  "head pain": "headache",
-};
-
-/* -----------------------------
-   EXTRACT SYMPTOMS
-------------------------------*/
-function extractSymptoms(text) {
-  return text
-    .toLowerCase()
-    .split(",")
-    .map((s) => s.trim())
-    .filter((s) => s.length > 2);
-}
-
-/* -----------------------------
-   ✅ FIXED PREDICT (MAIN ML ROUTE)
+   PREDICT (ML SERVICE)
 ------------------------------*/
 app.post("/predict", async (req, res) => {
   try {
-    console.log("REQ BODY:", req.body);
-
     const mappedData = {
       age: Number(req.body.age),
       trestbps: Number(req.body.trestbps),
@@ -91,14 +61,10 @@ app.post("/predict", async (req, res) => {
       oldpeak: Number(req.body.oldpeak),
     };
 
-    console.log("MAPPED DATA:", mappedData);
-
     const response = await axios.post(
-      "http://ai-service:5000/predict",
+      `${ML_URL}/predict`,
       mappedData
     );
-
-    console.log("FLASK RESPONSE:", response.data);
 
     res.json(response.data);
 
@@ -115,7 +81,7 @@ app.post("/predict", async (req, res) => {
 });
 
 /* -----------------------------
-   HYBRID PREDICTION (OPTIONAL)
+   HYBRID PREDICT
 ------------------------------*/
 app.post("/hybrid-predict", async (req, res) => {
   try {
@@ -138,7 +104,7 @@ app.post("/hybrid-predict", async (req, res) => {
     };
 
     const response = await axios.post(
-      "http://ai-service:5000/predict",
+      `${ML_URL}/predict`,
       mappedData
     );
 
@@ -147,7 +113,6 @@ app.post("/hybrid-predict", async (req, res) => {
     const combinedScore = 0.7 * mlProb + 0.3 * ruleScore;
 
     let finalRisk = "LOW";
-
     if (combinedScore > 0.7) finalRisk = "HIGH";
     else if (combinedScore > 0.4) finalRisk = "MEDIUM";
 
@@ -165,7 +130,7 @@ app.post("/hybrid-predict", async (req, res) => {
 });
 
 /* -----------------------------
-   AI CHAT
+   AI CHAT (OLLAMA)
 ------------------------------*/
 app.post("/chat", async (req, res) => {
   try {
@@ -174,9 +139,9 @@ app.post("/chat", async (req, res) => {
     await Chat.create({ role: "user", content: userMessage });
 
     const ollamaRes = await axios.post(
-      "http://host.docker.internal:11434/api/generate",
+      `${OLLAMA_URL}/api/generate`,
       {
-        model: "tinyllama",
+        model: "phi3",
         prompt: userMessage,
         stream: false,
       }
@@ -190,34 +155,28 @@ app.post("/chat", async (req, res) => {
 
   } catch (error) {
     console.error(error);
-    res.status(500).json({ response: "Error saving chat" });
+    res.status(500).json({ response: "Error in chat" });
   }
 });
 
+/* -----------------------------
+   DIAGNOSE
+------------------------------*/
 app.post("/diagnose", async (req, res) => {
   try {
     const { symptoms } = req.body;
 
-    console.log("SYMPTOMS:", symptoms);
-
-    const response = await fetch("http://host.docker.internal:11434/api/generate", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
+    const response = await axios.post(
+      `${OLLAMA_URL}/api/generate`,
+      {
         model: "phi3",
         prompt: `You are a medical assistant. Symptoms: ${symptoms}. Give disease and advice.`,
         stream: false,
-      }),
-    });
-
-    const data = await response.json();
-
-    console.log("OLLAMA RESPONSE:", data);
+      }
+    );
 
     res.json({
-      response: data.response || "No response",
+      response: response.data.response || "No response",
     });
 
   } catch (err) {
@@ -269,7 +228,7 @@ app.get("/", (req, res) => {
 /* -----------------------------
    START SERVER
 ------------------------------*/
-const PORT = 5001;
+const PORT = process.env.PORT || 5001;
 
 app.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);
