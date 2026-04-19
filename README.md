@@ -100,13 +100,12 @@ Ollama (LLM via ngrok)
   - Easy to update without redeployment  
 
 ---
+🐳 Run Locally
 
-## 🐳 Run Locally
+Follow these steps to run the project locally using Docker:
 
-```bash
 docker-compose up --build
 
----
-
-## 👨‍💻 Author
+👨‍💻 Author
 Jayant
+
